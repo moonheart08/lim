@@ -1,60 +1,113 @@
 #!/usr/bin/env perl6
+my @args;
+my @links;
 
 class ASTNode {
 	has @.children is rw;
-	method eval() {return (Any);}
+	method eval($linkid) {return (Any);}
 }
 
 class ASTNumber is ASTNode {
 	has Real $.num is rw;
-	method eval() {return $.num;}
+	method eval($linkid) {return $.num;}
 }
 
 class ASTString is ASTNode {
 	has Str $.str is rw;
-	method eval() {return $.str;}
+	method eval($linkid) {return $.str;}
 }
 
 class ASTBlock is ASTNode {
-	method eval() {return @.children;}
+	method eval($linkid) {return self;}
+	method call($linkid, @nargs) {
+		my @oldargs = @args;
+		@args = @nargs;
+		my $res = $.children[0].eval($linkid);
+		@args = @oldargs;
+		return $res;
+	}
 }
 
 class ASTList is ASTNode {
-	method eval() {return do for @.children { $_.eval };}
+	method eval($linkid) {return do for @.children { $_.eval($linkid) };}
 }
 
 class ASTInstr is ASTNode {
 	has Str $.instr is rw;
-	method eval() {
-		my @res = do for @.children { $_.eval; };
+	method eval($linkid) {
+		my @res = lazy do for @.children { $_.eval($linkid); };
 		given $.instr {
+			when '⁰' { @args[0] }
 			when '+' { [«+»] @res }
+			when '-' { [«-»] @res }
+			when '×' { [«×»] @res }
+			when '÷' { [«÷»] @res }
+			when '%' { [«%»] @res }
+			when '*' { [«**»] @res }
+			when '^' { [«xor»] @res }
+			when '&' { [«and»] @res }
+			when '|' { [«or»] @res }
+			when '₊' { @res «×» -1 }
+			when '=' { [«=»] @res }
+			when '≠' { [«≠»] @res }
+			when '¬' { @res».not }
+			when '_' { @res }
+			when '@' { @links[$linkid] }
+			when '`' {
+				if @res[0].WHAT === ASTBlock {
+					say @res[0].call($linkid, []);
+				} else {
+					say @res[0];
+				}
+			}
+			when 'e' {
+				if @res[0].WHAT === ASTBlock {
+					say @res[0].call($linkid, [@res[1]]);
+				} else {
+					say @res[0];
+				}
+			}
+			when '?' {
+				if !@res[2] {
+					return @res[1];
+				}
+
+				if @res[0].WHAT === ASTBlock {
+					@res[0].call($linkid, @args);
+				} else {
+					@res[0];
+				}
+			}
 		};
 	}
 }
 
 grammar LimParse {
-	token TOP { <expr>* }
+	token TOP { [<expr> <.ws>?]* }
 
 	proto token expr {*} 
 	token expr:sym<string> { '"' $<str>=['\"' | <-["]>]* ['"' | $]}
 	token expr:sym<nilad>  { <nilad> }
 	token expr:sym<monad>  { <monad> <expr> }
 	token expr:sym<dyad>   { <dyad> <expr> <.ws>? <expr> }
+	token expr:sym<triad>  { <triad> <expr> <.ws>? <expr> <.ws>? <expr> }
 	token expr:sym<number> { $<num>=\d+ }
 	token expr:sym<rat>    { $<left>=\d* '¸' $<right>=\d+ }
 	token expr:sym<block>  { '{' <expr> ['}' | $ ] }
-
+	token expr:sym<list>   { '[' [<expr> <[,]>? <.ws>?]* ']' }
 	
 	proto token nilad {*}
 	token nilad:sym<const> { 'Ç' <[pPeṕṔ]> }
-	token nilad:sym<instr> { $<instr>=<[⁰¹²³⁴⁵⁶⁷⁸⁹]> }
+	token nilad:sym<instr> { $<instr>=<[⁰¹²³⁴⁵⁶⁷⁸⁹@]> }
 
 	proto token monad {*}
-	token monad:sym<instr> { $<instr>=<[¬!`]> }
+	token monad:sym<instr> { $<instr>=<[¬!`₊_]> }
 	
 	proto token dyad {*}
-	token dyad:sym<instr> { $<instr>=<[-+÷×%*^&|]> }
+	token dyad:sym<instr> { $<instr>=<[-+÷×%*^&|=≠e]> }
+	
+	proto token triad {*} 
+	token triad:sym<instr> { $<instr>=<[?]> }
 }
 
 class LimToAst {
@@ -92,13 +145,42 @@ class LimToAst {
 		$v.children = do for $<expr> { $_.made };
 		make $v;
 	}
+	
+	method expr:sym<triad> ($/) {
+		my $v = $<triad>.made;
+		$v.children = do for $<expr> { $_.made };
+		make $v;
+	}
 
+	method expr:sym<list> ($/) {
+		make ASTList.new(children => do for $<expr> { $_.made });
+	}
+
+	method expr:sym<block> ($/) {
+		make ASTBlock.new(children => $<expr>.made );
+	}
+	
+	method triad:sym<instr> ($/) {
+		make ASTInstr.new(instr => $<instr>.Str);
+	}
+	
 	method dyad:sym<instr> ($/) {
 		make ASTInstr.new(instr => $<instr>.Str);
 	}
+	
+	method monad:sym<instr> ($/) {
+		make ASTInstr.new(instr => $<instr>.Str);
+	}
+
+	method nilad:sym<instr> ($/) {
+		make ASTInstr.new(instr => $<instr>.Str);
+	}
+
 }
 
-sub MAIN(Str $program) {
+sub MAIN(Str $program, +@nargs) {
+	@args = @nargs;
 	my @exec = LimParse.parse($program, actions => LimToAst).made;
-	say @exec[@exec.elems-1].eval;
+	@links = @exec;
+	say @exec[@exec.elems-1].eval(@exec.elems-1);
 }
