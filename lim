@@ -1,36 +1,104 @@
 #!/usr/bin/env perl6
 
-grammar ParseLim {
-	token TOP { [<expr> <.ws>?]* }
-
-	proto token expr {*}
-	token expr:<nilad> { <nilad> }
-	token expr:<monad> { <monad> <expr> }
-	token expr:<dyad>  { <dyad> <expr> <expr> }
-	token expr:<triad> { <triad> <expr> <expr> <expr> }
-	token expr:<block> { '{' <expr> '}' }
-	token expr:<str>   { '“' $<str>=['\”' | <-[”]>]* '”' }
-
-	proto token nilad {*}
-	token nilad:sym<number> { \d+ }
-	token nilad:sym<float>  { $<left>=\d+ '¸' $<right>=\d+ }
-	token nilad:sym<const> { 'Ç' $<const>=<[pPṕe↑Ṕ]> }
-	token nilad:sym<trait> { 'Ţ' $<trait>=<[o]> }
-	token nilad:sym<varread> { 'Ṽ' $<varname>=\w }
-	token nilad:sym<instruction> { <[]> }
-
-	proto token monad {*} 
-	token monad:sym<varwrite> { 'ṽ' $<varname>=\w }
-	token monad:sym<tag>   { 'ţ' $<tag>=\w }
-	token monad:sym<instruction> { <[]> }
-	
-	proto token dyad {*}
-	token dyad:sym<instruction> { <[]> }
-
-	proto token triad {*}
-	token triad:sym<instruction> { <[]> }
+class ASTNode {
+	has @.children is rw;
+	method eval() {return (Any);}
 }
 
-sub MAIN() {
-	say ParseLim.parse("");
+class ASTNumber is ASTNode {
+	has Real $.num is rw;
+	method eval() {return $.num;}
+}
+
+class ASTString is ASTNode {
+	has Str $.str is rw;
+	method eval() {return $.str;}
+}
+
+class ASTBlock is ASTNode {
+	method eval() {return @.children;}
+}
+
+class ASTList is ASTNode {
+	method eval() {return do for @.children { $_.eval };}
+}
+
+class ASTInstr is ASTNode {
+	has Str $.instr is rw;
+	method eval() {
+		my @res = do for @.children { $_.eval; };
+		given $.instr {
+			when '+' { [«+»] @res }
+		};
+	}
+}
+
+grammar LimParse {
+	token TOP { <expr>* }
+
+	proto token expr {*} 
+	token expr:sym<string> { '"' $<str>=['\"' | <-["]>]* ['"' | $]}
+	token expr:sym<nilad>  { <nilad> }
+	token expr:sym<monad>  { <monad> <expr> }
+	token expr:sym<dyad>   { <dyad> <expr> <.ws>? <expr> }
+	token expr:sym<number> { $<num>=\d+ }
+	token expr:sym<rat>    { $<left>=\d* '¸' $<right>=\d+ }
+	token expr:sym<block>  { '{' <expr> ['}' | $ ] }
+
+	
+	proto token nilad {*}
+	token nilad:sym<const> { 'Ç' <[pPeṕṔ]> }
+	token nilad:sym<instr> { $<instr>=<[⁰¹²³⁴⁵⁶⁷⁸⁹]> }
+
+	proto token monad {*}
+	token monad:sym<instr> { $<instr>=<[¬!`]> }
+	
+	proto token dyad {*}
+	token dyad:sym<instr> { $<instr>=<[-+÷×%*^&|]> }
+}
+
+class LimToAst {
+	method TOP ($/) {
+		make do for $<expr> {
+			$_.made;
+		};
+	}
+
+	method expr:sym<number> ($/) {
+		make ASTNumber.new(num => $<num>.Str.Int);	
+	}
+
+	method expr:sym<rat> ($/) {
+		make ASTNumber.new(num => FatRat.new($<left>.Str.Int, $<right>.Str.Int));
+	}
+
+	method expr:sym<string> ($/) {
+		my $s = $<str>.Str;
+		make ASTString.new(str => $s);
+	}
+
+	method expr:sym<nilad> ($/) {
+		make $<nilad>.made;
+	}
+
+	method expr:sym<monad> ($/) {
+		my $v = $<monad>.made;
+		$v.children = [$<expr>.made];
+		make $v;
+	}
+
+	method expr:sym<dyad> ($/) {
+		my $v = $<dyad>.made;
+		$v.children = do for $<expr> { $_.made };
+		make $v;
+	}
+
+	method dyad:sym<instr> ($/) {
+		make ASTInstr.new(instr => $<instr>.Str);
+	}
+}
+
+sub MAIN(Str $program) {
+	my @exec = LimParse.parse($program, actions => LimToAst).made;
+	say @exec[@exec.elems-1].eval;
 }
