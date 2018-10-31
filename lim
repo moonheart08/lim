@@ -1,0 +1,36 @@
+#!/usr/bin/env perl6
+
+grammar ParseLim {
+	token TOP { [<expr> <.ws>?]* }
+
+	proto token expr {*}
+	token expr:<nilad> { <nilad> }
+	token expr:<monad> { <monad> <expr> }
+	token expr:<dyad>  { <dyad> <expr> <expr> }
+	token expr:<triad> { <triad> <expr> <expr> <expr> }
+	token expr:<block> { '{' <expr> '}' }
+	token expr:<str>   { '“' $<str>=['\”' | <-[”]>]* '”' }
+
+	proto token nilad {*}
+	token nilad:sym<number> { \d+ }
+	token nilad:sym<float>  { $<left>=\d+ '¸' $<right>=\d+ }
+	token nilad:sym<const> { 'Ç' $<const>=<[pPṕe↑Ṕ]> }
+	token nilad:sym<trait> { 'Ţ' $<trait>=<[o]> }
+	token nilad:sym<varread> { 'Ṽ' $<varname>=\w }
+	token nilad:sym<instruction> { <[]> }
+
+	proto token monad {*} 
+	token monad:sym<varwrite> { 'ṽ' $<varname>=\w }
+	token monad:sym<tag>   { 'ţ' $<tag>=\w }
+	token monad:sym<instruction> { <[]> }
+	
+	proto token dyad {*}
+	token dyad:sym<instruction> { <[]> }
+
+	proto token triad {*}
+	token triad:sym<instruction> { <[]> }
+}
+
+sub MAIN() {
+	say ParseLim.parse("");
+}
